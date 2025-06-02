@@ -179,7 +179,7 @@ class MarginAccount:
         return tx_hash.hex()
 
     def get_balance(self, user_address: str, token: str) -> int:
-        return self.contract.functions.getBalance(user_address, token).call()
-
+        balance =  self.contract.functions.getBalance(user_address, token).call()
+        return balance
 
 __all__ = ["MarginAccount"]

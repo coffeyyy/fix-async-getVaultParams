@@ -8,6 +8,10 @@ from kuru_sdk.types import (
     OrderResponse,
     TradeResponse,
     OrderRequestWithStatus,
+    OrderCreatedEvent, 
+    TradePayload, 
+    OrderRequest, 
+    OrderCreatedEvent
 )
 from kuru_sdk.api import KuruAPI
 import asyncio
@@ -119,16 +123,29 @@ class ClientOrderExecutor:
         Returns the cloid (client order ID) for the order
         """
 
-        # Generate cloid if not provided
+        # 1) Generate cloid if not provided
         if not order.cloid:
-            # We'll temporarily set a placeholder and update it after getting tx_hash
             order.cloid = "pending_cloid_"
 
         cloid = order.cloid
         market_address = order.market_address
 
-        # Ensure the tx processor is running
-        self.start_tx_processor()
+        # ──────────────────────────────────────────────────────────────────
+        # 2) Pre-populate a “pending” entry so get_order_by_cloid(...) isn’t None
+        from kuru_sdk.types import OrderRequestWithStatus
+
+        # Copy all fields from OrderRequest into a new OrderRequestWithStatus
+        pending = OrderRequestWithStatus(**order.__dict__)
+        pending.status = "pending"
+        # No receipt yet
+        pending.tx_receipt = None
+
+        # Store it immediately
+        self.cloid_to_order[cloid] = pending
+        # ──────────────────────────────────────────────────────────────────
+
+        # 3) Ensure the tx processor is running
+        await self.start_tx_processor()
 
         try:
             tx_hash = None
@@ -140,7 +157,8 @@ class ClientOrderExecutor:
 
                 if order.side == "buy":
                     self._log_info(
-                        f"Adding buy order with price: {order.price}, size: {order.size}, post_only: {order.post_only}, tx_options: {tx_options}"
+                        f"Adding buy order with price: {order.price}, size: {order.size}, "
+                        f"post_only: {order.post_only}, tx_options: {tx_options}"
                     )
                     tx_hash = await self.orderbook.add_buy_order(
                         price=order.price,
@@ -159,6 +177,7 @@ class ClientOrderExecutor:
                         tx_options=tx_options,
                         async_execution=async_execution,
                     )
+
             elif order.order_type == "market":
                 if not order.min_amount_out:
                     raise ValueError("min_amount_out is required for market orders")
@@ -183,6 +202,7 @@ class ClientOrderExecutor:
                         tx_options=tx_options,
                         async_execution=async_execution,
                     )
+
             elif order.order_type == "cancel":
                 cancel_cloid = await self.cancel_orders(
                     market_address=market_address,
@@ -194,7 +214,7 @@ class ClientOrderExecutor:
                 )
                 return cancel_cloid
 
-            # If we used a placeholder cloid, update it now with tx_hash_side_price format
+            # 4) Update placeholder cloid to include tx_hash (if it was "pending_cloid_")
             if order.cloid == "pending_cloid_":
                 if order.price:
                     normalized_order_price, _ = (
@@ -207,11 +227,16 @@ class ClientOrderExecutor:
                     price_str = order.order_type
                 order.cloid = f"{tx_hash}_{order.side}_{price_str}"
 
-            # Store the callback if provided
+                # Move the “pending” entry under the new real cloid:
+                pending.cloid = order.cloid
+                self.cloid_to_order.pop("pending_cloid_", None)
+                self.cloid_to_order[order.cloid] = pending
+
+            # 5) Store the callback if provided
             if callback:
                 self.tx_callbacks[tx_hash] = (callback, callback_args)
 
-            # Add to processing queue
+            # 6) Add to processing queue
             self.tx_queue.append((tx_hash, [order]))
 
             return order.cloid
@@ -246,7 +271,7 @@ class ClientOrderExecutor:
         if cloids:
             order_ids = []
             for cloid in cloids:
-                order_id = self._get_order_id_for_cloid(cloid)
+                order_id = await self._get_order_id_for_cloid(cloid)
                 if order_id is not None:
                     order_ids.append(order_id)
                     cancel_order = OrderRequest(
@@ -392,19 +417,14 @@ class ClientOrderExecutor:
         """Safely get order_id for a given cloid"""
         return self.cloid_to_order_id.get(cloid)
 
-    def match_orders_with_events(
-        self,
-        orders: List[OrderRequest],
-        events: List[OrderCreatedEvent],
-        receipt: web3.types.TxReceipt,
-    ) -> List[OrderRequest]:
+    def match_orders_with_events(self, orders: List[OrderRequest], events: List[OrderCreatedEvent], receipt: web3.types.TxReceipt) -> List[OrderRequest]:
         """
         Match orders with events based the price and isBuy field
         """
         for order in orders:
             if order.order_type == "cancel" or order.order_type == "market":
                 self._set_order_status(order, "fulfilled", receipt)
-
+                
                 if order.order_type == "cancel":
                     if order.cancel_cloids:
                         for cloid in order.cancel_cloids:
@@ -418,16 +438,12 @@ class ClientOrderExecutor:
                 continue
 
             for event in events:
-                normalized_order_price, _ = (
-                    self.orderbook.normalize_with_precision_and_tick(
-                        order.price, "0", order.tick_normalization
-                    )
-                )
-                if normalized_order_price == event.price and order.side == (
-                    "buy" if event.is_buy else "sell"
-                ):
+                normalized_order_price, _ = self.orderbook.normalize_with_precision_and_tick(
+                    order.price, '0', order.tick_normalization)
+                if normalized_order_price == event.price and order.side == ("buy" if event.is_buy else "sell"):
                     self._set_order_status(order, "fulfilled", receipt)
                     self._set_cloid_order_id_mapping(order.cloid, event.order_id)
+    
 
     async def get_l2_book(self):
         return await self.orderbook.get_l2_book()
