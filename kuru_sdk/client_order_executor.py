@@ -417,7 +417,99 @@ class ClientOrderExecutor:
         """Safely get order_id for a given cloid"""
         return self.cloid_to_order_id.get(cloid)
 
-    def match_orders_with_events(self, orders: List[OrderRequest], events: List[OrderCreatedEvent], receipt: web3.types.TxReceipt) -> List[OrderRequest]:
+    from typing import List, Any
+import web3.types
+
+# Import both event types from your types module
+from kuru_sdk.types import OrderCreatedEvent, TradePayload, OrderRequest
+
+
+class ClientOrderExecutor:
+    # … other methods …
+
+    def match_orders_with_events(
+        self,
+        orders: List[OrderRequest],
+        events: List[Any],                 # can contain OrderCreatedEvent and/or TradePayload
+        receipt: web3.types.TxReceipt,
+    ) -> List[OrderRequest]:
+        """
+        Match each OrderRequest in `orders` against on-chain events in `events`.
+        1) First try to find a matching OrderCreatedEvent (limit order posted on-book).
+        2) If no OrderCreatedEvent matches, try to find a matching TradePayload
+           (immediate fill/cross).
+        When matched, call _set_order_status(order, "fulfilled", receipt) and record
+        the cloid→order_id mapping via _set_cloid_order_id_mapping.
+        """
+
+        for order in orders:
+            # 1) Cancel or market‐type orders are considered fulfilled immediately:
+            if order.order_type in ("cancel", "market"):
+                self._set_order_status(order, "fulfilled", receipt)
+
+                if order.order_type == "cancel":
+                    # Mark any canceled cloids/IDs accordingly
+                    if order.cancel_cloids:
+                        for cloid in order.cancel_cloids:
+                            if cloid in self.cloid_to_order:
+                                self.cloid_to_order[cloid].is_canceled = True
+
+                    if order.cancel_order_ids:
+                        for oid in order.cancel_order_ids:
+                            cloid = self.get_cloid_by_order_id(oid)
+                            if cloid and cloid in self.cloid_to_order:
+                                self.cloid_to_order[cloid].is_canceled = True
+
+                continue  # move to next order
+
+            # 2) Normalize the order’s price (string → integer) to compare against event.price
+            normalized_price_int, _ = self.orderbook.normalize_with_precision_and_tick(
+                order.price,
+                "0",
+                order.tick_normalization
+            )
+            matched = False
+
+            # 3a) First pass: look for OrderCreatedEvent
+            for ev in events:
+                if isinstance(ev, OrderCreatedEvent):
+                    ev_price_int = int(ev.price)  # price is stored as string in the event
+                    ev_side = "buy" if ev.is_buy else "sell"
+
+                    if normalized_price_int == ev_price_int and order.side == ev_side:
+                        # Found a matching “new order” event
+                        self._set_order_status(order, "fulfilled", receipt)
+                        self._set_cloid_order_id_mapping(order.cloid, ev.order_id)
+                        matched = True
+                        break
+
+            if matched:
+                continue  # already marked fulfilled, skip trying TradePayload
+
+            # 3b) Second pass: look for TradePayload (immediate fill)
+            for ev in events:
+                if isinstance(ev, TradePayload):
+                    # If the event carries the same cloid, match immediately
+                    if ev.cloid == order.cloid:
+                        self._set_order_status(order, "fulfilled", receipt)
+                        self._set_cloid_order_id_mapping(order.cloid, ev.order_id)
+                        matched = True
+                        break
+
+                    # Otherwise, if event only has order_id, match by that mapping:
+                    known_oid = self._get_order_id_for_cloid(order.cloid)
+                    if ev.order_id == known_oid:
+                        self._set_order_status(order, "fulfilled", receipt)
+                        matched = True
+                        break
+
+            if not matched:
+                # No matching event found; leave status as “pending”
+                self._log_info(f"No matching event for CLOID={order.cloid}; remains pending")
+
+        return orders
+
+    '''def match_orders_with_events(self, orders: List[OrderRequest], events: List[OrderCreatedEvent], receipt: web3.types.TxReceipt) -> List[OrderRequest]:
         """
         Match orders with events based the price and isBuy field
         """
@@ -442,7 +534,7 @@ class ClientOrderExecutor:
                     order.price, '0', order.tick_normalization)
                 if normalized_order_price == event.price and order.side == ("buy" if event.is_buy else "sell"):
                     self._set_order_status(order, "fulfilled", receipt)
-                    self._set_cloid_order_id_mapping(order.cloid, event.order_id)
+                    self._set_cloid_order_id_mapping(order.cloid, event.order_id)'''
     
 
     async def get_l2_book(self):
