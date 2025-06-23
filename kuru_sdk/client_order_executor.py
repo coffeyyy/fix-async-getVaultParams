@@ -1,4 +1,4 @@
-from web3 import Web3
+from web3 import AsyncWeb3
 import web3.types
 from kuru_sdk.orderbook import Orderbook, TxOptions
 from typing import Dict, List, Optional, Callable, Awaitable, Any, Union
@@ -8,21 +8,19 @@ from kuru_sdk.types import (
     OrderResponse,
     TradeResponse,
     OrderRequestWithStatus,
-    OrderCreatedEvent,
     TradePayload,
-    OrderRequest,
-    OrderCreatedEvent,
 )
 from kuru_sdk.api import KuruAPI
 import asyncio
 import logging
 from collections import deque
+from eth_account import Account
 
 
 class ClientOrderExecutor:
     def __init__(
         self,
-        web3: Web3,
+        web3: AsyncWeb3,
         contract_address: str,
         private_key: Optional[str] = None,
         kuru_api_url: Optional[str] = None,
@@ -32,7 +30,7 @@ class ClientOrderExecutor:
         self.web3 = web3
         self.orderbook = Orderbook(web3, contract_address, private_key, logger=logger)
         self.kuru_api = KuruAPI(kuru_api_url)
-        self.wallet_address = self.web3.eth.account.from_key(private_key).address
+        self.wallet_address = Account.from_key(private_key)
 
         # Set up logger
         if isinstance(logger, logging.Logger):
@@ -73,9 +71,7 @@ class ClientOrderExecutor:
             if self.tx_queue:
                 tx_hash, orders = self.tx_queue.popleft()
                 try:
-                    receipt = await asyncio.to_thread(
-                        self.web3.eth.wait_for_transaction_receipt, tx_hash
-                    )
+                    receipt = await self.web3.eth.wait_for_transaction_receipt(tx_hash)
 
                     if receipt.status == 1:
                         order_created_events = self.orderbook.decode_logs(receipt)
@@ -157,8 +153,7 @@ class ClientOrderExecutor:
 
                 if order.side == "buy":
                     self._log_info(
-                        f"Adding buy order with price: {order.price}, size: {order.size}, "
-                        f"post_only: {order.post_only}, tx_options: {tx_options}"
+                        f"Adding buy order with price: {order.price}, size: {order.size}, post_only: {order.post_only}, tx_options: {tx_options}"
                     )
                     tx_hash = await self.orderbook.add_buy_order(
                         price=order.price,
@@ -501,14 +496,19 @@ class ClientOrderExecutor:
 
         return orders
 
-    '''def match_orders_with_events(self, orders: List[OrderRequest], events: List[OrderCreatedEvent], receipt: web3.types.TxReceipt) -> List[OrderRequest]:
+    def match_orders_with_events(
+        self,
+        orders: List[OrderRequest],
+        events: List[OrderCreatedEvent],
+        receipt: web3.types.TxReceipt,
+    ) -> List[OrderRequest]:
         """
         Match orders with events based the price and isBuy field
         """
         for order in orders:
             if order.order_type == "cancel" or order.order_type == "market":
                 self._set_order_status(order, "fulfilled", receipt)
-                
+
                 if order.order_type == "cancel":
                     if order.cancel_cloids:
                         for cloid in order.cancel_cloids:
@@ -522,11 +522,16 @@ class ClientOrderExecutor:
                 continue
 
             for event in events:
-                normalized_order_price, _ = self.orderbook.normalize_with_precision_and_tick(
-                    order.price, '0', order.tick_normalization)
-                if normalized_order_price == event.price and order.side == ("buy" if event.is_buy else "sell"):
+                normalized_order_price, _ = (
+                    self.orderbook.normalize_with_precision_and_tick(
+                        order.price, "0", order.tick_normalization
+                    )
+                )
+                if normalized_order_price == event.price and order.side == (
+                    "buy" if event.is_buy else "sell"
+                ):
                     self._set_order_status(order, "fulfilled", receipt)
-                    self._set_cloid_order_id_mapping(order.cloid, event.order_id)'''
+                    self._set_cloid_order_id_mapping(order.cloid, event.order_id)
 
     async def get_l2_book(self):
         return await self.orderbook.get_l2_book()

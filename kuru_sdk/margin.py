@@ -9,6 +9,10 @@ with open(os.path.join(os.path.dirname(__file__), "abi/ierc20.json"), "r") as f:
     erc20_abi = json.load(f)
 
 
+class InsufficientBalanceError(Exception):
+    pass
+
+
 class MarginAccount:
     def __init__(
         self, web3: Web3, contract_address: str, private_key: Optional[str] = None
@@ -66,6 +70,11 @@ class MarginAccount:
         if token != self.NATIVE:
 
             token_contract = self.web3.eth.contract(address=token, abi=erc20_abi)
+            balance = token_contract.functions.balanceOf(self.contract_address).call()
+            if balance > amount:
+                raise InsufficientBalanceError(
+                    f"Withdrawal failed: requested {amount}, but only {balance} available."
+                )
 
             # Check allowance
             allowance = token_contract.functions.allowance(
@@ -93,6 +102,11 @@ class MarginAccount:
                 receipt = self.web3.eth.wait_for_transaction_receipt(tx_hash)
                 print(f"Approval transaction hash: {receipt.transactionHash.hex()}")
 
+        balance = token_contract.functions.balanceOf(self.contract_address).call()
+        if balance > amount:
+            raise InsufficientBalanceError(
+                f"Withdrawal failed: requested {amount}, but only {balance} available."
+            )
         # Build transaction
         transaction = self.contract.functions.deposit(
             self.wallet_address, token, amount
@@ -147,7 +161,25 @@ class MarginAccount:
         Returns:
             transaction_hash: Hash of the submitted transaction
         """
+
         token = Web3.to_checksum_address(token)
+
+        # Check if token is not native and needs approval
+        if token != self.NATIVE:
+
+            token_contract = self.web3.eth.contract(address=token, abi=erc20_abi)
+            balance = token_contract.functions.balanceOf(self.contract_address).call()
+            if balance > amount:
+                raise InsufficientBalanceError(
+                    f"Withdrawal failed: requested {amount}, but only {balance} available."
+                )
+
+        else:
+            balance = token_contract.functions.balanceOf(self.contract_address).call()
+            if balance > amount:
+                raise InsufficientBalanceError(
+                    f"Withdrawal failed: requested {amount}, but only {balance} available."
+                )
 
         # Build transaction
         transaction = self.contract.functions.withdraw(amount, token)
@@ -178,9 +210,8 @@ class MarginAccount:
 
         return tx_hash.hex()
 
-    def get_balance(self, user_address: str, token: str) -> int:
-        balance = self.contract.functions.getBalance(user_address, token).call()
-        return balance
+    async def get_balance(self, user_address: str, token: str) -> int:
+        return self.contract.functions.getBalance(user_address, token).call()
 
 
 __all__ = ["MarginAccount"]

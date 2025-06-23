@@ -1,5 +1,5 @@
 from math import ceil, floor, log10
-from web3 import Web3
+from web3 import AsyncWeb3
 from typing import Optional, List, Tuple, Dict, Any
 import json
 import os
@@ -22,7 +22,7 @@ from .types import (
 class Orderbook:
     def __init__(
         self,
-        web3: Web3,
+        web3: AsyncWeb3,
         contract_address: str,
         private_key: Optional[str] = None,
         logger: Optional[logging.Logger] = None,
@@ -39,7 +39,7 @@ class Orderbook:
             logger: Logger instance (optional)
         """
         self.web3 = web3
-        self.contract_address = Web3.to_checksum_address(contract_address)
+        self.contract_address = AsyncWeb3.to_checksum_address(contract_address)
         self.private_key = private_key
 
         # Set up logger
@@ -136,9 +136,10 @@ class Orderbook:
         else:
             # Default to 2x current base fee for maxFeePerGas
             # Get base fee from latest block
-            base_fee = self.web3.eth.get_block("latest")["baseFeePerGas"]
+            base_fee = await self.web3.eth.get_block("latest")["baseFeePerGas"]
             tx["maxPriorityFeePerGas"] = (
-                tx_options.max_priority_fee_per_gas or self.web3.eth.max_priority_fee
+                await tx_options.max_priority_fee_per_gas
+                or await self.web3.eth.max_priority_fee
             )
             tx["maxFeePerGas"] = base_fee + tx["maxPriorityFeePerGas"]
             # Default priority fee (can be adjusted based on network conditions)
@@ -148,15 +149,15 @@ class Orderbook:
             tx["maxPriorityFeePerGas"] = tx["maxFeePerGas"]
 
         if tx_options.gas_limit is None:
-            estimated_gas = self.web3.eth.estimate_gas(tx)
+            estimated_gas = await self.web3.eth.estimate_gas(tx)
             tx["gas"] = estimated_gas
         else:
-            tx["gas"] = tx_options.gas_limit
+            tx["gas"] = await tx_options.gas_limit
 
         if tx_options.nonce is not None:
             tx["nonce"] = tx_options.nonce
         else:
-            tx["nonce"] = self.web3.eth.get_transaction_count(tx["from"])
+            tx["nonce"] = await self.web3.eth.get_transaction_count(tx["from"])
         return tx
 
     async def _execute_transaction(
@@ -183,7 +184,7 @@ class Orderbook:
 
                     async def send_tx_background():
                         try:
-                            self.web3.eth.send_raw_transaction(
+                            await self.web3.eth.send_raw_transaction(
                                 signed_tx.raw_transaction
                             )
                         except Exception as e:
@@ -195,12 +196,12 @@ class Orderbook:
                     asyncio.create_task(send_tx_background())
                 else:
                     # Send synchronously
-                    self.web3.eth.send_raw_transaction(signed_tx.raw_transaction)
+                    await self.web3.eth.send_raw_transaction(signed_tx.raw_transaction)
 
                 return tx_hash_from_signed
             else:
                 # For non-private key transactions
-                tx_hash = self.web3.eth.send_transaction(tx)
+                tx_hash = await self.web3.eth.send_transaction(tx)
                 return tx_hash.hex()
         except Exception as e:
             raise RuntimeError("Error executing transaction: " + str(e))
@@ -472,7 +473,7 @@ class Orderbook:
         except Exception as e:
             raise Exception(f"Error batching orders: {get_error_message(str(e))}")
 
-    async def get_vault_params(self) -> VaultParams:
+    def get_vault_params(self) -> VaultParams:
         """Fetch vault parameters from the contract"""
         try:
             # Call the contract function to get vault parameters
@@ -562,7 +563,7 @@ class Orderbook:
             for order in sell_orders
         ]
 
-        vault_params = await self.get_vault_params()
+        vault_params = self.get_vault_params()
 
         return L2Book(
             block_num=block_num,

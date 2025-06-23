@@ -2,7 +2,7 @@ import socketio
 import asyncio
 import aiohttp
 import logging
-from typing import Optional, Callable, Union
+from typing import Optional, Callable, Union, Awaitable
 from kuru_sdk.types import (
     OrderCreatedPayload,
     TradePayload,
@@ -13,14 +13,19 @@ from kuru_sdk.client_order_executor import ClientOrderExecutor
 
 
 class WebSocketHandler:
+
     def __init__(
         self,
         websocket_url: str,
         market_address: str,
         market_params: MarketParams,
-        on_order_created: Optional[Callable[[OrderCreatedPayload], None]] = None,
+        on_order_created: Optional[
+            Callable[[OrderCreatedPayload], Awaitable[None]]
+        ] = None,
         on_trade: Optional[Callable[[TradePayload], None]] = None,
-        on_order_cancelled: Optional[Callable[[OrderCancelledPayload], None]] = None,
+        on_order_cancelled: Optional[
+            Callable[[OrderCancelledPayload], Awaitable[None]]
+        ] = None,
         reconnect_interval: int = 5,
         max_reconnect_attempts: int = 5,
         client_order_executor: Optional[ClientOrderExecutor] = None,
