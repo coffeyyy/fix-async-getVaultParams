@@ -7,10 +7,11 @@ from .types import OrderRequest
 __version__ = "0.1.0"
 
 __all__ = [
-    'Orderbook',
-    'TxOptions',
-    'MarketParams',
-    'MarginAccount',
-    'ClientOrderExecutor',
-    'OrderRequest',
+    "Orderbook",
+    "TxOptions",
+    "MarketParams",
+    "MarginAccount",
+    "ClientOrderExecutor",
+    "OrderRequest",
+    "KuruAPI",
 ]

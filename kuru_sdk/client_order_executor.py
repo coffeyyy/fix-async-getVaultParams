@@ -8,10 +8,10 @@ from kuru_sdk.types import (
     OrderResponse,
     TradeResponse,
     OrderRequestWithStatus,
-    OrderCreatedEvent, 
-    TradePayload, 
-    OrderRequest, 
-    OrderCreatedEvent
+    OrderCreatedEvent,
+    TradePayload,
+    OrderRequest,
+    OrderCreatedEvent,
 )
 from kuru_sdk.api import KuruAPI
 import asyncio
@@ -239,7 +239,7 @@ class ClientOrderExecutor:
             # 6) Add to processing queue
             self.tx_queue.append((tx_hash, [order]))
 
-            return order.cloid
+            return tx_hash
 
         except Exception as e:
             self._log_error(f"Error placing order: {e}")
@@ -417,20 +417,10 @@ class ClientOrderExecutor:
         """Safely get order_id for a given cloid"""
         return self.cloid_to_order_id.get(cloid)
 
-    from typing import List, Any
-import web3.types
-
-# Import both event types from your types module
-from kuru_sdk.types import OrderCreatedEvent, TradePayload, OrderRequest
-
-
-class ClientOrderExecutor:
-    # … other methods …
-
     def match_orders_with_events(
         self,
         orders: List[OrderRequest],
-        events: List[Any],                 # can contain OrderCreatedEvent and/or TradePayload
+        events: List[Any],  # can contain OrderCreatedEvent and/or TradePayload
         receipt: web3.types.TxReceipt,
     ) -> List[OrderRequest]:
         """
@@ -464,16 +454,16 @@ class ClientOrderExecutor:
 
             # 2) Normalize the order’s price (string → integer) to compare against event.price
             normalized_price_int, _ = self.orderbook.normalize_with_precision_and_tick(
-                order.price,
-                "0",
-                order.tick_normalization
+                order.price, "0", order.tick_normalization
             )
             matched = False
 
             # 3a) First pass: look for OrderCreatedEvent
             for ev in events:
                 if isinstance(ev, OrderCreatedEvent):
-                    ev_price_int = int(ev.price)  # price is stored as string in the event
+                    ev_price_int = int(
+                        ev.price
+                    )  # price is stored as string in the event
                     ev_side = "buy" if ev.is_buy else "sell"
 
                     if normalized_price_int == ev_price_int and order.side == ev_side:
@@ -505,7 +495,9 @@ class ClientOrderExecutor:
 
             if not matched:
                 # No matching event found; leave status as “pending”
-                self._log_info(f"No matching event for CLOID={order.cloid}; remains pending")
+                self._log_info(
+                    f"No matching event for CLOID={order.cloid}; remains pending"
+                )
 
         return orders
 
@@ -535,7 +527,6 @@ class ClientOrderExecutor:
                 if normalized_order_price == event.price and order.side == ("buy" if event.is_buy else "sell"):
                     self._set_order_status(order, "fulfilled", receipt)
                     self._set_cloid_order_id_mapping(order.cloid, event.order_id)'''
-    
 
     async def get_l2_book(self):
         return await self.orderbook.get_l2_book()
